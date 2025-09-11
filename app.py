@@ -1,7 +1,8 @@
 import os
 from flask import Flask, request, render_template_string
 from openai import AzureOpenAI
-from pypdf import PdfReader
+from PyPDF2 import PdfReader
+
 
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
