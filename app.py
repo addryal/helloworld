@@ -1,12 +1,15 @@
 import os
 from flask import Flask, request, render_template_string
 from openai import AzureOpenAI
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
-# Read from environment variables
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
 AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4o-mini")
+
+for v in ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_KEY", "AZURE_OPENAI_DEPLOYMENT"]:
+    if not globals()[v]:
+        raise RuntimeError(f"Missing required environment variable: {v}")
 
 client = AzureOpenAI(
     api_key=AZURE_OPENAI_KEY,
@@ -15,50 +18,48 @@ client = AzureOpenAI(
 )
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB
 
 TEMPLATE = """
-<!DOCTYPE html>
-<html>
-  <head><title>PDF Entity Extractor</title></head>
-  <body>
-    <h2>Upload a PDF</h2>
-    <form method="POST" enctype="multipart/form-data">
-      <input type="file" name="pdf">
-      <input type="submit" value="Upload">
-    </form>
-    {% if entities %}
-      <h3>Extracted Entities & Terms:</h3>
-      <pre>{{ entities }}</pre>
-    {% endif %}
-  </body>
-</html>
+<!DOCTYPE html><html><body>
+  <h2>Upload a PDF</h2>
+  <form method="POST" enctype="multipart/form-data">
+    <input type="file" name="pdf" accept="application/pdf">
+    <button type="submit">Upload</button>
+  </form>
+  {% if error %}<p style="color:red">{{ error }}</p>{% endif %}
+  {% if entities %}<h3>Extracted Entities & Terms</h3><pre>{{ entities }}</pre>{% endif %}
+</body></html>
 """
 
 def extract_pdf_text(file_stream):
     reader = PdfReader(file_stream)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() or ""
-    return text
+    return "".join((page.extract_text() or "") for page in reader.pages)
 
 @app.route("/", methods=["GET", "POST"])
 def index():
+    error = None
     entities = None
     if request.method == "POST":
-        pdf_file = request.files.get("pdf")
-        if pdf_file:
-            text = extract_pdf_text(pdf_file)
-            sample_text = text[:2000]  # limit to first 2000 chars for demo
-            response = client.chat.completions.create(
-                model=AZURE_OPENAI_DEPLOYMENT,
-                messages=[
-                    {"role": "system", "content": "You are an assistant that extracts key entities and important terms from documents."},
-                    {"role": "user", "content": f"Extract the key entities and important terms from the following text:\n\n{sample_text}"}
-                ],
-                max_tokens=300
-            )
-            entities = response.choices[0].message.content.strip()
-    return render_template_string(TEMPLATE, entities=entities)
+        pdf = request.files.get("pdf")
+        if not pdf:
+            error = "No file uploaded."
+        else:
+            try:
+                text = extract_pdf_text(pdf)
+                sample = text[:2000] if text else "No text extracted."
+                resp = client.chat.completions.create(
+                    model=AZURE_OPENAI_DEPLOYMENT,
+                    messages=[
+                        {"role":"system","content":"Extract key entities and important terms. Respond concisely."},
+                        {"role":"user","content":f"Text:\n{sample}"}
+                    ],
+                    max_tokens=300
+                )
+                entities = resp.choices[0].message.content.strip()
+            except Exception as e:
+                error = f"{type(e).__name__}: {e}"
+    return render_template_string(TEMPLATE, entities=entities, error=error)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000)
