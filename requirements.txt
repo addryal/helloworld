@@ -1,4 +1,4 @@
 flask
 openai
-pypdf==4.3.1
+PyPDF2
 gunicorn
